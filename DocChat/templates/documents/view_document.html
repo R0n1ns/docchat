@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/docx-preview@2.3.0/dist/docx-preview.min.js"></script>
+
+<div class="container mt-4">
+    <h2>{{ document.original_filename }}</h2>
+    <p><strong>Название файла:</strong> {{ document.filename }}</p>
+    <p><strong>Загружен:</strong> {{ document.upload_date|date:"d.m.Y H:i" }}</p>
+    <p><strong>Статус:</strong> {{ document.get_status_display }}</p>
+
+    <hr>
+
+    <form method="POST">
+        {% csrf_token %}
+        <div class="btn-group" role="group">
+            <button type="submit" name="send" class="btn btn-primary">
+                <i data-feather="send"></i> Отправить документ
+            </button>
+            <a href="{{ file_url }}" class="btn btn-secondary" download>
+                <i data-feather="download"></i> Скачать документ
+            </a>
+            <button type="submit" name="delete" class="btn btn-danger" onclick="return confirm('Вы уверены, что хотите удалить этот документ?');">
+                <i data-feather="trash-2"></i> Удалить документ
+            </button>
+            <button type="button" onclick="location.href='{% url 'upload_new_version' document.id %}'"
+            class="btn btn-info">
+                <i data-feather="refresh-cw"></i> Загрузить новую версию
+            </button>
+        </div>
+    </form>
+
+    <hr>
+
+    <button id="toggleHistory" class="btn btn-outline-info mt-3">
+        <i data-feather="history"></i> Просмотреть историю передачи
+    </button>
+
+    <div id="historySection" style="display: none;" class="mt-3">
+        <h4>История действий</h4>
+        {% if transfer_history %}
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>От кого</th>
+                    <th>Направлен</th>
+                    <th>Версия</th>
+                    <th>Комментарий</th>
+
+                </tr>
+            </thead>
+            <tbody>
+    {% for history in transfer_history %}
+    <tr>
+        <td>{{ history.timestamp|date:"d.m.Y H:i" }}</td>
+        <td>{{ history.sender.full_name|default:history.sender.username }}</td>
+        <td>
+            {% if history.recipient_user %}
+                User: {{ history.recipient_user.full_name|default:history.recipient_user.username }}
+            {% elif history.recipient_group %}
+                Group: {{ history.recipient_group.name }}
+            {% endif %}
+        </td>
+       <td>
+            {% if history.version and history.version.version_url %}
+                <a href="{{ history.version.version_url }}"
+                   title="Скачать эту версию" download>
+                    Версия от {{ history.timestamp|date:"d.m.Y H:i" }}
+                </a>
+            {% else %}
+                <span class="text-muted">N/A</span>
+            {% endif %}
+        </td>
+        <td>
+            {% if history.notes %}
+                {{ history.notes }}
+            {% else %}
+                <span class="text-muted">-</span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">Нет истории отправки.</p>
+        {% endif %}
+    </div>
+
+    <hr>
+
+<!--{#    <div class="btn-group mt-3">#}-->
+<!--{#        {% if document.content_type == "application/pdf" %}#}-->
+<!--{#        <button id="signDocument" class="btn btn-success">#}-->
+<!--{#            <i data-feather="edit"></i> Sign Document#}-->
+<!--{#        </button>#}-->
+<!--{#        <button id="verifySignature" class="btn btn-warning">#}-->
+<!--{#            <i data-feather="check-circle"></i> Verify Signature#}-->
+<!--{#        </button>#}-->
+<!--{#                {% endif %}#}-->
+<!--{##}-->
+<!--{#    </div>#}-->
+
+    <!-- Всплывающее уведомление -->
+    <div id="notification" class="alert alert-info" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 1000;">
+    </div>
+
+    <!-- Секция предпросмотра документа -->
+    <div class="text-center mt-4">
+        {% if file_url %}
+        <script>
+            console.log("{{ document.content_type}}");
+        </script>
+            {% if document.content_type == "application/pdf" %}
+                <h4>Предварительный просмотр документа</h4>
+                <iframe src="{{ file_url }}" style="width:80%; height:600px; border:none;"></iframe>
+            {% else %}
+                <div class="alert alert-warning">
+                    Данный тип файла не поддерживается для отображения ({{ document.content_type }})
+                    <p class="mt-2">
+                        <a href="{{ file_url }}" class="btn btn-primary" download>
+                            <i data-feather="download"></i> Скачать файл
+                        </a>
+                    </p>
+                </div>
+            {% endif %}
+        {% else %}
+            <p class="text-danger">Файл недоступен</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.getElementById('toggleHistory').addEventListener('click', function() {
+    var historySection = document.getElementById('historySection');
+    if (historySection.style.display === "none") {
+        historySection.style.display = "block";
+        this.innerHTML = '<i data-feather="history"></i> Скрыть историю отправки';
+    } else {
+        historySection.style.display = "none";
+        this.innerHTML = '<i data-feather="history"></i> Просмотреть историю отправки';
+    }
+});
+
+// Функция для показа уведомления
+function showNotification(message, type="info") {
+    var notification = document.getElementById('notification');
+    notification.innerHTML = message;
+    notification.className = "alert alert-" + type;
+    notification.style.display = "block";
+    setTimeout(function() {
+        notification.style.display = "none";
+    }, 5000);
+}
+
+{#// Подписание документа#}
+{#document.getElementById('signDocument').addEventListener('click', function() {#}
+{#    fetch("{% url 'sign_document' document.id %}", {#}
+{#        method: "POST",#}
+{#        headers: {#}
+{#            "X-CSRFToken": "{{ csrf_token }}"#}
+{#        }#}
+{#    }).then(response => response.json()).then(data => {#}
+{#        if (data.success) {#}
+{#            showNotification("Документ успешно подписан.", "success");#}
+{#        } else {#}
+{#            showNotification("Ошибка: " + data.error, "danger");#}
+{#        }#}
+{#    }).catch(error => {#}
+{#        showNotification("Ошибка сети.", "danger");#}
+{#    });#}
+{#});#}
+{##}
+{#// Проверка подписей#}
+{#document.getElementById('verifySignature').addEventListener('click', function() {#}
+{#    fetch("{% url 'verify_document' document.id %}").then(response => response.json()).then(data => {#}
+{#        if (data.verified.length > 0) {#}
+{#            showNotification("Документ подписан пользователями: " + data.verified.join(", "), "success");#}
+{#        } else {#}
+{#            showNotification("Подписей не найдено или они недействительны.", "warning");#}
+{#        }#}
+{#    }).catch(error => {#}
+{#        showNotification("Ошибка сети.", "danger");#}
+{#    });#}
+{#});#}
+</script>
+
+{% endblock %}

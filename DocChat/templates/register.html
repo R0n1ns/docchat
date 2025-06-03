@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title mb-0">
+                    {% if show_otp_field %}Подтвердите свою электронную почту{% else %}Регистрация{% endif %}
+                </h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {% csrf_token %}
+
+                    {% if not show_otp_field %}
+                        <!-- Первый шаг: Регистрация -->
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Почта</label>
+                            <input type="email" class="form-control" id="email" name="email"
+{#                                   pattern=".*@(company\.com|corporate\.org)$"#}
+                                   title="Введите почту"
+                                   required>
+                            <div class="form-text">Введите почту</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="username" name="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="password" name="password" minlength="8" required>
+                            <div class="form-text">Минимум 8 символов</div>
+                        </div>
+                    {% else %}
+                        <!-- Второй шаг: Ввод OTP -->
+                        <div class="mb-3">
+                            <label for="otp" class="form-label">Код верификации</label>
+                            <input type="text" class="form-control" id="otp" name="otp"
+                                   pattern="\d{6}" maxlength="6"
+                                   title="Please enter the 6-digit verification code"
+                                   required>
+                            <div class="form-text">Введите 6-значный код, отправленный на вашу электронную почту</div>
+                        </div>
+                    {% endif %}
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        {% if show_otp_field %}Подтверждение{% else %}Регистрация{% endif %}
+                    </button>
+                </form>
+            </div>
+            <div class="card-footer text-center">
+                {% if not show_otp_field %}
+                    <p class="mb-0">Уже есть учетная запись? <a href="{% url 'login' %}">Войдите здесь</a></p>
+                {% else %}
+                    <p class="mb-0">Не получили код? <a href="{% url 'register' %}">Отправить еще раз</a></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

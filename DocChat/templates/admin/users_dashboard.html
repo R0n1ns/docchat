@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Управление пользователями</h2>
+            <p class="text-muted">Управление пользователями, ролями и разрешениями</p>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-lg-6">
+            <form method="GET" class="d-flex">
+                <input type="text" name="search" class="form-control me-2" placeholder="Search by Full Name"
+                       value="{{ request.GET.search }}">
+                <button type="submit" class="btn btn-primary">Search</button>
+            </form>
+        </div>
+                <div class="col text-end">
+            <a href="{% url 'create_user' %}" class="btn btn-success">
+            <i data-feather="plus"></i> Добавить пользователя</a>
+    </div>
+    </div>
+
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="card-title mb-0">Users List</h4>
+                </div>
+                <div class="card-body">
+                    {% if users %}
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ФИО</th>
+                                    <th>Почта</th>
+                                    <th>Должность</th>
+                                    <th>Группы</th>
+                                    <th>Разрешения</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for user in users %}
+                                <tr>
+                                    <td>{{ user.full_name }}</td>
+                                    <td>{{ user.email }}</td>
+                                    <td>{{ user.job_title|default:"-" }}</td>
+                                    <td>
+                                        {% if user.custom_groups.all %}
+                                            <ul class="list-unstyled mb-0">
+                                                {% for group in user.custom_groups.all %}
+                                                    <li><span class="badge bg-info">{{ group.name }}</span></li>
+                                                {% endfor %}
+                                            </ul>
+                                        {% else %}
+                                            <span class="text-muted">Нет групп</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <ul class="list-unstyled">
+                                            {% if user.can_manage_documents %}<li>📂 Управлять документами</li>{% endif %}
+                                            {% if user.can_forward_documents %}<li>📤 Отправлять документы</li>{% endif %}
+                                            {% if user.can_create_documents %}<li>📝 Создавать документы</li>{% endif %}
+                                            {% if user.can_sign_documents %}<li>✍️ Подписывать документы</li>{% endif %}
+                                            {% if user.can_view_statistics %}<li>📊 Смотреть статистику</li>{% endif %}
+                                            {% if user.can_modify_users %}<li>👥 Управлять пользователями</li>{% endif %}
+                                            {% if user.can_modify_groups %}<li>🔑 Управлять группами</li>{% endif %}
+                                        </ul>
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'admin_edit_role' user.id %}" class="btn btn-sm btn-outline-secondary">
+                                            <i data-feather="edit-2"></i> Изменить
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-center">Пользователей не найдено.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

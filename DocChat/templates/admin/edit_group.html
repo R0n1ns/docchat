@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Редактировать группу: {{ group.name|title }}</h2>
+            <p class="text-muted">Изменить детали группы, членов и лидера</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="card-title mb-0">Конфигурация пользователя</h4>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Название группы</label>
+                            <input type="text" class="form-control" id="name" name="name" 
+                                   value="{{ group.name }}" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="members" class="form-label">Участники</label>
+                            <select class="form-select" id="members" name="members" multiple>
+                                {% for user in all_users %}
+                                <option value="{{ user.id }}" {% if user in group.members.all %}selected{% endif %}>
+                                    {{ user.full_name|default:user.username }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Выберите участников, чтобы добавить в группу.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="leader" class="form-label">Глава группы</label>
+                            <select class="form-select" id="leader" name="leader">
+                                <option value="">None</option>
+                                {% for user in all_users %}
+                                <option value="{{ user.id }}" {% if user == group.leader %}selected{% endif %}>
+                                    {{ user.full_name|default:user.username }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Выберите лидера для этой группы.</div>
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'group_dashboard' %}" class="btn btn-secondary">
+                                <i data-feather="arrow-left"></i> Назад
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i data-feather="save"></i> Сохранить изменения
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

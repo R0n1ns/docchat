@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title mb-0">
+                    {% if show_otp_field %}Введите код{% else %}Вход{% endif %}
+                </h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {% csrf_token %}
+
+                    {% if not show_otp_field %}
+                        <!-- Первый шаг: Ввод email и пароля -->
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Адрес электронной почты</label>
+                            <input type="email" class="form-control" id="email" name="email" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Пароль</label>
+                            <input type="password" class="form-control" id="password" name="password" required>
+                        </div>
+                    {% else %}
+                        <!-- Второй шаг: Ввод OTP -->
+                        <div class="mb-3">
+                            <label for="otp" class="form-label">Код верификации</label>
+                            <input type="text" class="form-control" id="otp" name="otp"
+                                   pattern="\d{6}" maxlength="6"
+                                   title="Please enter the 6-digit verification code"
+                                   required>
+                            <div class="form-text">Введите 6-значный код, отправленный на вашу электронную почту</div>
+                        </div>
+                    {% endif %}
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        {% if show_otp_field %}Верифицировать{% else %}Вход{% endif %}
+                    </button>
+                </form>
+
+                {% if not show_otp_field %}
+                    <div class="mt-4">
+<!--                        <p class="text-center mb-3">Или войти в систему с</p>-->
+{#                        <div class="d-grid gap-2">#}
+{#                            {% for provider in socialaccount.providers %}#}
+{#                            <a href="{% provider_login_url provider.id %}" class="btn btn-outline-secondary">#}
+{#                                Войти с {{ provider.name }}#}
+{#                            </a>#}
+{#                            {% endfor %}#}
+{#                        </div>#}
+                    </div>
+                {% endif %}
+            </div>
+            <div class="card-footer text-center">
+                {% if not show_otp_field %}
+                    <p class="mb-0">У вас нет учетной записи? <a href="{% url 'register' %}">Зарегистроваться</a></p>
+                {% else %}
+                    <p class="mb-0">Не получили код? <a href="{% url 'login' %}">Отправить еще раз</a></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

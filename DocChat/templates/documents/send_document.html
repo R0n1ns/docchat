@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Отправить документ: {{ document.original_filename }}</h2>
+
+    <form method="POST">
+        {% csrf_token %}
+
+    <div class="mb-3">
+            <label class="form-label">Выберите версию</label>
+            <select name="version" class="form-select" required>
+                {% for version in versions %}
+                <option value="{{ version.version_id }}"
+                        {% if version == current_version %}selected{% endif %}>
+                    Версия от - {{ version.timestamp|date:"Y-m-d H:i" }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    
+    <div class="mb-3">
+      <label for="users" class="form-label">Отправить пользователям</label>
+      <select class="form-select" id="users" name="users" multiple>
+        {% for user in all_users %}
+          <option value="{{ user.id }}">
+            {{ user.full_name|default:user.username }} ({{ user.email }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="mb-3">
+      <label for="groups" class="form-label">Отправить в группы</label>
+      <select class="form-select" id="groups" name="groups" multiple>
+        {% for group in all_groups %}
+          <option value="{{ group.id }}">{{ group.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="mb-3">
+      <label for="notes" class="form-label">Примечания (необязательно)</label>
+      <textarea class="form-control" id="notes" name="notes" rows="3"></textarea>
+    </div>
+    
+    <div class="d-flex justify-content-between">
+      <a href="{% url 'view_document' document.id %}" class="btn btn-secondary">
+        <i data-feather="arrow-left"></i> Назад
+      </a>
+      <button type="submit" class="btn btn-primary">
+        <i data-feather="send"></i> Отправить документ
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
