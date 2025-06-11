@@ -22,4 +22,4 @@ def send_otp_email(recipient_email, otp_code):
     print(recipient_email,otp_code)
     from_email = settings.DEFAULT_FROM_EMAIL
 
-    send_mail(subject, message, from_email, [recipient_email], fail_silently=False)
+    # send_mail(subject, message, from_email, [recipient_email], fail_silently=False)

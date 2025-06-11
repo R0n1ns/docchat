@@ -1,4 +1,5 @@
 import tempfile
+from pathlib import Path
 
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse, Http404, FileResponse, JsonResponse
@@ -24,6 +25,8 @@ from django.shortcuts import get_object_or_404, redirect
 from django.contrib import messages
 from .models import Document
 import io
+
+from .utils.pdf_stamp import stamp_pdf_with_dynamic_text
 from .utils.signature import verify_pdf_bytes
 
 from pyhanko.sign import signers, fields
@@ -653,33 +656,51 @@ def upload_new_version(request, doc_id):
 #         return redirect("view_document", doc_id=doc_id)
 @login_required
 def sign_document(request, doc_id):
-    """Заглушка для подписи документа с сохранением в истории передачи"""
+    """Подписывает PDF-документ, добавляя штамп с датой/временем, и сохраняет новую версию"""
     document = get_object_or_404(Document, id=doc_id, owner=request.user)
 
+    if not document.filename.lower().endswith(".pdf"):
+        return JsonResponse({'success': False, 'error': 'Можно подписывать только PDF-документы.'}, status=400)
+
     try:
-        # Скачиваем текущую версию
+        # Скачиваем текущую версию из MinIO во временный файл
         minio_response = download_file_from_minio(document)
-        current_content = minio_response.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_input:
+            temp_input.write(minio_response.read())
+            temp_input_path = Path(temp_input.name)
 
-        # Загружаем как новую подписанную версию
-        notes = f"Документ подписан (заглушка) пользователем {request.user.full_name}"
-        version = upload_file_to_minio(document, current_content, document.content_type, notes)
+        # Создаём временный файл для результата
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_output:
+            temp_output_path = Path(temp_output.name)
 
-        # Создаем запись в истории передачи
+        # Применяем подпись со штампом
+        stamp_pdf_with_dynamic_text(temp_input_path, temp_output_path)
+
+        # Загружаем подписанный документ в MinIO как новую версию
+        with open(temp_output_path, "rb") as f:
+            content = f.read()
+
+        notes = f"Документ подписан пользователем {request.user.full_name}"
+        version = upload_file_to_minio(document, content, document.content_type, notes)
+
+        # Создаём запись в истории передачи
         DocumentTransferHistory.objects.create(
             document=document,
             sender=request.user,
+            recipient_user=None,  # Отправитель и получатель — один пользователь
             notes=notes,
             version=version,
-            action_type="signature",
-            recipient_user= None# Отправитель и получатель - один пользователь
+            action_type="signature"
         )
+
+        # Удаляем временные файлы
+        temp_input_path.unlink(missing_ok=True)
+        temp_output_path.unlink(missing_ok=True)
 
         return JsonResponse({'success': True})
 
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
-
 
 @login_required
 def verify_document(request, doc_id):

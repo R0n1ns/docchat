@@ -165,6 +165,7 @@ document.getElementById('signDocument').addEventListener('click', function() {
     .then(data => {
         if (data.success) {
             showNotification("Документ успешно подписан.", "success");
+            location.reload();
         } else {
             showNotification("Ошибка: " + data.error, "danger");
         }
