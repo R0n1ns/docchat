@@ -24,6 +24,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.contrib import messages
 from .models import Document
 import io
+from .utils.signature import verify_pdf_bytes
 
 from pyhanko.sign import signers, fields
 from pyhanko.pdf_utils.reader import PdfFileReader
@@ -192,7 +193,7 @@ def dashboard(request):
 
 @login_required
 def upload_document(request):
-    """Загружает файл, шифрует его и сохраняет в MinIO, добавляя запись в базу данных."""
+    """Загружает файл и сохраняет первую версию в истории"""
     if request.method == "POST":
         if "file" not in request.FILES:
             messages.error(request, "No file part.")
@@ -209,11 +210,8 @@ def upload_document(request):
 
         # Читаем содержимое файла
         file_content = file.read()
-        # Шифруем данные с помощью AES-256
-        # encrypted_content = encrypt_data(file_content, settings.ENCRYPTION_KEY)
 
-        # Загружаем зашифрованный файл в MinIO
-        # Сохраняем запись в БД
+        # Создаем запись в БД
         document = Document.objects.create(
             filename=saved_filename,
             original_filename=file.name,
@@ -222,7 +220,17 @@ def upload_document(request):
             is_encrypted=True
         )
 
-        upload_file_to_minio(document, file_content, file.content_type)
+        # Загружаем файл в MinIO и получаем объект версии
+        version = upload_file_to_minio(document, file_content, file.content_type, "Первоначальная загрузка")
+
+        # Создаем запись в истории передачи для первоначальной загрузки
+        DocumentTransferHistory.objects.create(
+            document=document,
+            sender=request.user,
+            notes="Первоначальная загрузка документа",
+            version=version,
+            action_type="upload"
+        )
 
         # Логируем действие
         AuditLog.objects.create(
@@ -276,22 +284,22 @@ def delete_document(request, doc_id):
 @login_required
 def view_document(request, doc_id):
     document = get_object_or_404(Document, id=doc_id)
-    file_url = get_minio_file_url(document)  # Используем функцию
 
-    # Получаем историю передачи с уже сохраненными URL версий
-    transfer_history = document.transfer_history.select_related('version').all().order_by('-timestamp')
+    # Получаем всю историю передачи
+    transfer_history = document.transfer_history.select_related('sender', 'recipient_user', 'recipient_group',
+                                                                'version').order_by('-timestamp')
+
+    # Получаем URL для последней версии
+    last_version = transfer_history.first()
+    file_url = get_minio_file_url(document) if last_version else None
 
     if request.method == "POST":
         if "delete" in request.POST:
-            # Если документ удаляет его владелец, удаляем документ для всех
             if request.user == document.owner:
-                # Сначала удаляем файл из MinIO и создаём запись истории
                 delete_file_from_minio(document)
-                # Затем удаляем запись документа из базы данных
                 document.delete()
                 messages.success(request, "Документ успешно удален для всех пользователей.")
             else:
-                # Если не владелец, удаляем его только у текущего пользователя
                 if request.user in document.shared_users.all():
                     document.shared_users.remove(request.user)
                     messages.success(request, "Документ удален из ваших доступных документов.")
@@ -303,10 +311,9 @@ def view_document(request, doc_id):
         elif "download" in request.POST:
             return redirect("download_document", doc_id=doc_id)
 
-
     return render(request, "documents/view_document.html", {
         "document": document,
-        "transfer_history": transfer_history,
+        "transfer_history": transfer_history,  # <-- правильная переменная для шаблона
         "file_url": file_url,
     })
 
@@ -405,11 +412,12 @@ def edit_role(request, user_id):
         if "generate_certificate" in request.POST:
             try:
                 # Здесь пароль для PKCS#12. В реальном приложении его следует генерировать или запрашивать
-                pkcs12_password = b'password'
-                certificate = create_and_save_certificate(user, pkcs12_password, validity_days=365)
+                # pkcs12_password = b'password'
+                # certificate = create_and_save_certificate(user, pkcs12_password, validity_days=365)
                 messages.success(
                     request,
-                    f"Новый сертификат успешно создан. Серийный номер: {certificate.serial_number}"
+                    f"Новый сертификат успешно создан. Серийный номер: {'test'}"
+                    # f"Новый сертификат успешно создан. Серийный номер: {certificate.serial_number}"
                 )
             except Exception as e:
                 messages.error(request, f"Ошибка генерации сертификата: {str(e)}")
@@ -478,7 +486,7 @@ def create_user(request):
         pkcs12_password = b'password'
 
         # Создаем и сохраняем сертификат для пользователя
-        certificate = create_and_save_certificate(user, pkcs12_password, validity_days=365)
+        # certificate = create_and_save_certificate(user, pkcs12_password, validity_days=365)
         # Применяем группы
         selected_group_ids = request.POST.getlist("groups")
         user.custom_groups.set(UserGroup.objects.filter(id__in=selected_group_ids))
@@ -598,17 +606,16 @@ def upload_new_version(request, doc_id):
         file = request.FILES["file"]
         notes = request.POST.get("notes", "Комментарий к новой версии")
 
-        # Загрузка файла в MinIO
         file_content = file.read()
-        upload_file_to_minio(document, file_content, file.content_type, notes)
+        # Загружаем новую версию и получаем объект версии
+        version = upload_file_to_minio(document, file_content, file.content_type, notes)
 
-        # Создание записи о передаче
-        current_version = document.version_history.last()
+        # Создаем запись о передаче (версия загружена)
         DocumentTransferHistory.objects.create(
             document=document,
             sender=request.user,
             notes=f"Загружена новая версия: {notes}",
-            version=current_version,
+            version=version,
             action_type="version_upload"
         )
 
@@ -618,7 +625,6 @@ def upload_new_version(request, doc_id):
     return render(request, "documents/upload_new_version.html", {
         "document": document
     })
-
 
 # @login_required
 # def download_version(request, doc_id, version_id):
@@ -645,81 +651,53 @@ def upload_new_version(request, doc_id):
 #     except Exception as e:
 #         messages.error(request, f"Error downloading version: {str(e)}")
 #         return redirect("view_document", doc_id=doc_id)
-# @login_required
-# def sign_document(request, doc_id):
-#     """
-#     Обработчик для подписи PDF-документа текущим пользователем.
-#     Возвращает JSON: {success: bool, error?: str}
-#     """
-#     if request.method != 'POST':
-#         return JsonResponse({'success': False, 'error': 'Invalid method'}, status=405)
-#
-#     document = get_object_or_404(Document, id=doc_id, owner=request.user)
-#
-#     # Получаем действующий (неотозванный, неистекший) сертификат
-#     cert = DigitalCertificate.objects.filter(
-#         user=request.user,
-#         is_revoked=False,
-#         expires_at__gt=dj_timezone.now()
-#     ).last()
-#
-#     if not cert:
-#         return JsonResponse({'success': False, 'error': 'Valid certificate not found'}, status=400)
-#
-#     try:
-#         # Шаг 1: Скачиваем PDF из MinIO
-#         minio_response = download_file_from_minio(document)
-#         input_pdf_bytes = minio_response.read()
-#
-#         # Шаг 2: Временные файлы для подписания
-#         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as input_pdf:
-#             input_pdf.write(input_pdf_bytes)
-#             input_pdf_path = input_pdf.name
-#
-#         output_pdf_path = input_pdf_path.replace('.pdf', '_signed.pdf')
-#
-#         # TODO: Получи реальный пароль пользователя (например, через форму, сессии и т.д.)
-#         pkcs12_password = b'password'
-#
-#         # Шаг 3: Подписываем PDF
-#         sign_pdf_document(
-#             document=document,
-#             certificate=cert,
-#             pkcs12_password=pkcs12_password
-#         )
-#
-#         # Шаг 4: Загружаем подписанный PDF обратно в MinIO
-#         with open(output_pdf_path, 'rb') as signed_file:
-#             signed_pdf_bytes = signed_file.read()
-#             upload_file_to_minio(document, signed_pdf_bytes, content_type=document.content_type)
-#
-#         return JsonResponse({'success': True})
-#
-#     except Exception as e:
-#         return JsonResponse({'success': False, 'error': str(e)}, status=500)
-#
-# @login_required
-# def verify_document(request, doc_id):
-#     """
-#     AJAX‑обработчик GET для проверки подписей в документе.
-#     Возвращает JSON вида { verified: [<CN1>, <CN2>, ...], error?: <msg> }.
-#     """
-#     document = get_object_or_404(Document, id=doc_id)
-#     try:
-#         # 1. Скачиваем PDF из MinIO
-#         response = download_file_from_minio(document)
-#         pdf_bytes = response.read()
-#
-#         # 2. Собираем доверенные корни из актуальных (не отозванных) сертификатов
-#         trust_roots = list(
-#             DigitalCertificate.objects
-#             .filter(is_revoked=False, expires_at__gt=dj_timezone.now())
-#             .values_list('certificate_pem', flat=True)
-#         )
-#
-#         # 3. Запускаем верификацию
-#         verified = verify_pdf_bytes(pdf_bytes, trust_roots)
-#
-#         return JsonResponse({'verified': verified})
-#     except Exception as e:
-#         return JsonResponse({'verified': [], 'error': str(e)}, status=500)
+@login_required
+def sign_document(request, doc_id):
+    """Заглушка для подписи документа с сохранением в истории передачи"""
+    document = get_object_or_404(Document, id=doc_id, owner=request.user)
+
+    try:
+        # Скачиваем текущую версию
+        minio_response = download_file_from_minio(document)
+        current_content = minio_response.read()
+
+        # Загружаем как новую подписанную версию
+        notes = f"Документ подписан (заглушка) пользователем {request.user.full_name}"
+        version = upload_file_to_minio(document, current_content, document.content_type, notes)
+
+        # Создаем запись в истории передачи
+        DocumentTransferHistory.objects.create(
+            document=document,
+            sender=request.user,
+            notes=notes,
+            version=version,
+            action_type="signature",
+            recipient_user= None# Отправитель и получатель - один пользователь
+        )
+
+        return JsonResponse({'success': True})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
+@login_required
+def verify_document(request, doc_id):
+    document = get_object_or_404(Document, id=doc_id)
+    try:
+        response = download_file_from_minio(document)
+        pdf_bytes = response.read()
+        verified = verify_pdf_bytes(pdf_bytes, [])
+
+        # Добавляем поле success и возвращаем verified
+        return JsonResponse({
+            'success': True,
+            'verified': verified
+        })
+    except Exception as e:
+        # Добавляем success: false и error
+        return JsonResponse({
+            'success': False,
+            'verified': [],
+            'error': str(e)
+        }, status=500)

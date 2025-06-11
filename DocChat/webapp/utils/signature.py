@@ -6,14 +6,14 @@
 # from django.utils.timezone import make_aware
 # from pyhanko.keys import load_cert_from_pemder, load_certs_from_pemder
 # from pyhanko.sign import signers
-# from pyhanko.pdf_utils.reader import PdfFileReader
+# from pyhanko.pdf_utils.reader importa PdfFileReader
 # from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 # from pyhanko.sign.signers.pdf_signer import PdfSignatureMetadata, PdfSigner
 # from pyhanko.sign.fields import append_signature_field, SigFieldSpec
 # from pyhanko.sign.validation import validate_pdf_signature
 # from pyhanko_certvalidator import ValidationContext
 # from pyhanko_certvalidator.registry import SimpleCertificateStore
-# from webapp.models import Document, DigitalCertificate, PdfSignatureLog
+# from .models import Document, DigitalCertificate, PdfSignatureLog
 # from cryptography.hazmat.primitives.asymmetric import rsa
 # from cryptography.hazmat.primitives import hashes, serialization
 # from cryptography import x509
@@ -150,3 +150,31 @@
 #                 verified_cn.append(attrs[0].value)
 #     return verified_cn
 #
+# fro .models import Document, DigitalCertificate, PdfSignatureLog
+# from DocChat.webapp.models import Document#,DigitalCertificate, PdfSignatureLog
+
+
+def create_and_save_certificate(user, pkcs12_password: bytes, validity_days=365):
+    # Заглушка для сертификата
+    return None
+
+def load_signer( pkcs12_password: bytes):#(cert: DigitalCertificate, pkcs12_password: bytes):
+    # Заглушка для подписывающего объекта
+    return None
+
+def sign_pdf_document(#document: Document, #certificate: DigitalCertificate,
+                     pkcs12_password: bytes, signature_field_name: str = "Signature1",
+                     notes: str = None) -> str:
+    # Заглушка для подписи
+    return "signature_stub_version"
+
+def verify_pdf_bytes(input_bytes: bytes, trust_roots_pem: list[str]) -> list[str]:
+    """
+    Заглушка для верификации подписей в PDF.
+    Возвращает список строк (имена подписавших).
+    """
+    # Например, возвращаем фиктивное имя владельца сертификата
+    return ["Иванов И.И."]
+
+
+

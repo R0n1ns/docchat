@@ -125,6 +125,8 @@ class DocumentTransferHistory(models.Model):
     ACTION_TYPES = [
         ('transfer', 'Transfer'),
         ('version_upload', 'Version Upload'),
+        ('signature', 'Signature'),
+        ('upload', 'Upload'),  # Новый тип для первоначальной загрузки
     ]
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='transfer_history')
     sender = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='sent_document_transfers')
@@ -169,7 +171,13 @@ class DocumentVersionHistory(models.Model):
     etag = models.CharField(max_length=100, blank=True, null=True)
     timestamp = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True, null=True)
-
+    is_signed = models.BooleanField(default=False, verbose_name="Подписан")
+    file_name = models.CharField(max_length=255,null=True)  # Добавьте это поле
+    signature_placeholder = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Заглушка подписи"
+    )
     def __str__(self):
         return f"Version {self.version_id} of {self.document.original_filename} at {self.timestamp}"
 

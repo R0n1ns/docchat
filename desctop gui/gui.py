@@ -12,7 +12,6 @@ def parse_arguments():
 
 
 def create_window(url):
-    # Конфигурация окна
     window = webview.create_window(
         title='Docchat',
         url=url,
@@ -20,13 +19,9 @@ def create_window(url):
         height=800,
         resizable=True,
         text_select=True,
-        confirm_close=True
+        confirm_close=True,
     )
-
-    # Обработчики событий
     window.events.closed += lambda: sys.exit(0)
-    # window.events.loaded += lambda: print("Приложение загружено")
-
     return window
 
 
@@ -47,8 +42,9 @@ def main():
     # Создание и запуск окна
     window = create_window(server_url)
     webview.start(
-        gui='qt',  # Используем Qt для лучшей совместимости
-        # debug=True,  # Режим отладки
+        # gui='qt',
+        user_agent='DocchatApp',
+        debug=False,
         http_server=False,
         private_mode=False
     )

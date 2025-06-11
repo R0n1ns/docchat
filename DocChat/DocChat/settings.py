@@ -23,9 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = "django-insecure-eid8+argo%+*%)qd22pz$%v)+_^76)y1=k!4p#ahvftp+a3brw"
 
+only_for_app =False
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-
 # ALLOWED_HOSTS = []
 
 AUTHENTICATION_BACKENDS = [
@@ -61,8 +61,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-]
 
+]
+if only_for_app:
+    MIDDLEWARE.append('webapp.middleware.docchat_only.AllowOnlyDocchatApp')
 
 ROOT_URLCONF = "DocChat.urls"
 
@@ -76,6 +78,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+
             ],
         },
     },

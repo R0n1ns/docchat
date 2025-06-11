@@ -1,12 +1,17 @@
 import io
-from datetime import timedelta
-from minio import Minio
+import urllib
+import uuid
+from datetime import timedelta, datetime
+
+from django.utils import timezone
+from minio import Minio, S3Error
 from django.conf import settings
 from minio.versioningconfig import VersioningConfig
-from webapp.models import Document, DocumentVersionHistory
 
 from DocChat.settings import MINIO_BUCKET_NAME
 
+# Правильный относительный импорт
+from ..models import AuditLog, Document, DocumentVersionHistory
 
 def get_minio_client():
     """
@@ -42,46 +47,73 @@ def upload_file_to_minio(document: Document, file_content: bytes, content_type: 
     bucket_name = settings.MINIO_BUCKET_NAME
     ensure_bucket_exists(bucket_name)
 
-    saved_original_filename = document.original_filename
+    # Генерируем уникальное имя файла
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved_filename = f"{timestamp}_{document.original_filename}"
+
     data_stream = io.BytesIO(file_content)
     data_length = len(file_content)
 
-    response = client.put_object(
-        bucket_name,
-        saved_original_filename,
-        data_stream,
-        data_length,
-        content_type=content_type
-    )
-    version_id = getattr(response, "version_id", None)
+    # Загрузка файла в MinIO
+    try:
+        response = client.put_object(
+            bucket_name,
+            saved_filename,  # Используем сгенерированное имя
+            data_stream,
+            data_length,
+            content_type=content_type
+        )
+    except S3Error as exc:
+        print("Error uploading file to MinIO:", exc)
+        return None
 
-    # Генерируем URL для этой версии
-    version_url = get_minio_file_url(document, version_id=version_id) if version_id else None
+    version_id = response.version_id if hasattr(response, "version_id") else None
 
-    # Создаем запись в истории версий с URL
-    version_history = DocumentVersionHistory.objects.create(
+    # Определяем флаги для подписи
+    is_signed = notes and "подпис" in notes.lower()
+    signature_placeholder = "Подпись заглушка" if is_signed else None
+
+    version_url = client.presigned_get_object(bucket_name, saved_filename, expires=timedelta(hours=1))
+
+    version = DocumentVersionHistory.objects.create(
         document=document,
-        version_id=str(version_id) if version_id else "unknown",
+        version_id=version_id or str(uuid.uuid4()),
+        file_name=saved_filename,
         file_size=data_length,
-        etag=getattr(response, "etag", None),
+        etag=response.etag,
+        timestamp=timezone.now(),
         notes=notes,
-        version_url=version_url  # Сохраняем сгенерированный URL
+        is_signed=is_signed,
+        signature_placeholder=signature_placeholder,
+        version_url=version_url
     )
-    return version_history
+
+    # Логируем действие
+    AuditLog.objects.create(
+        user=document.owner,
+        action="upload_version",
+        details=f"Uploaded new version of {document.original_filename} as {saved_filename} (signed: {is_signed})"
+    )
+
+    return version
 
 
 def download_file_from_minio(document: Document, version_id: str = None):
-    """
-    Скачивает файл (либо его конкретную версию) из MinIO.
-
-    :param document: Экземпляр модели Document, файл которого требуется скачать.
-    :param version_id: (Опционально) Идентификатор конкретной версии файла.
-    :return: Объект-ответ от MinIO, поддерживающий метод read() (поток данных).
-    """
     client = get_minio_client()
     bucket_name = settings.MINIO_BUCKET_NAME
-    # Имя файла берется из поля original_filename документа.
-    response = client.get_object(bucket_name, document.original_filename, version_id=version_id)
+
+    # Получаем последнюю версию файла из истории
+    last_version = document.version_history.order_by('-timestamp').first()
+    if not last_version:
+        raise FileNotFoundError("No versions available")
+
+    file_name = last_version.file_name  # ✅ используем чистое имя файла
+
+    response = client.get_object(
+        bucket_name,
+        file_name,
+        version_id=version_id
+    )
     return response
 
 
@@ -135,19 +167,23 @@ def delete_file_from_minio(document: Document, version_id: str = None, notes: st
         )
 
 
-def get_minio_file_url(document: Document, expires=timedelta(hours=1), version_id: str = None):
+def get_minio_file_url(document: Document, expires=timedelta(hours=1)):
     client = get_minio_client()
     bucket_name = settings.MINIO_BUCKET_NAME
 
-    try:
-        # Убедимся, что version_id - это строка или None
-        version_id_str = str(version_id) if version_id else None
+    # Получаем последнюю версию документа
+    last_version = document.version_history.order_by('-timestamp').first()
+    if not last_version:
+        return None
 
+    # Используем имя файла из версии
+    file_name = last_version.file_name
+
+    try:
         url = client.presigned_get_object(
             bucket_name,
-            document.original_filename,
-            expires=expires,
-            version_id=version_id_str  # Передаем как строку
+            file_name,
+            expires=expires
         )
         return url
     except Exception as e:
