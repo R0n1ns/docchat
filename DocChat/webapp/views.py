@@ -1,10 +1,16 @@
+import base64
+import json
 import tempfile
 from pathlib import Path
 
 from django.core.exceptions import PermissionDenied
-from django.http import HttpResponse, Http404, FileResponse, JsonResponse
+from django.http import HttpResponse, Http404, FileResponse, JsonResponse, HttpResponseBadRequest
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.clickjacking import xframe_options_exempt
+from django.views.decorators.csrf import csrf_exempt
+from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+from pyhanko.sign.timestamps import HTTPTimeStamper
+from pyhanko.stamp import TextStamp, TextStampStyle
 
 from .models import CustomUser, AuditLog, Role, UserGroup, DocumentTransferHistory
 from django.utils import timezone
@@ -29,7 +35,7 @@ import io
 from .utils.pdf_stamp import stamp_pdf_with_dynamic_text
 from .utils.signature import verify_pdf_bytes
 
-from pyhanko.sign import signers, fields
+from pyhanko.sign import signers, fields, PdfSigner
 from pyhanko.pdf_utils.reader import PdfFileReader
 from pyhanko.pdf_utils.writer import PdfFileWriter
 
@@ -654,69 +660,130 @@ def upload_new_version(request, doc_id):
 #     except Exception as e:
 #         messages.error(request, f"Error downloading version: {str(e)}")
 #         return redirect("view_document", doc_id=doc_id)
+
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET, require_POST
+
+
+import hashlib
+import base64
+
+def compute_pdf_hash(pdf_bytes: bytes) -> str:
+    digest = hashlib.sha256(pdf_bytes).digest()
+    return base64.b64encode(digest).decode('utf-8')
+
+@require_GET
+@login_required
+def get_document_hash(request, doc_id):
+    """Возвращает base64-хеш PDF-документа"""
+    document = get_object_or_404(Document, id=doc_id, owner=request.user)
+    response = download_file_from_minio(document)
+    pdf_bytes = response.read()
+    hash_b64 = compute_pdf_hash(pdf_bytes)
+    return JsonResponse({'hash': hash_b64})
+
+from pyhanko.sign import signers
+from pyhanko.sign.general import load_cert_from_pemder
+
+def load_signer(user):
+    """
+    Загружает SimpleSigner из PKCS#12-файла пользователя.
+    """
+    p12_path = f"/path/to/p12_storage/{user.username}.p12"
+    p12_password = user.certificate_password  # или зашифрованное поле
+
+    with open(p12_path, 'rb') as f:
+        p12_data = f.read()
+
+    return signers.SimpleSigner.load_pkcs12(
+        pfx_file=p12_data,
+        passphrase=p12_password.encode('utf-8'),
+    )
+from pyhanko.sign import signers
+from pyhanko.sign.general import load_cert_from_pemder
+from pyhanko.sign.fields import SigFieldSpec, VisibleSigSettings, append_signature_field
+from pyhanko.sign.signers.pdf_signer import PdfSigner, PdfSignatureMetadata
+
+from pyhanko.sign.signers import SimpleSigner
+from pyhanko.sign.validation import validate_pdf_signature
+from pyhanko_certvalidator import ValidationContext
+
+from io import BytesIO
+from django.utils import timezone
+
+
+@csrf_exempt
+@require_POST
 @login_required
 def sign_document(request, doc_id):
-    """Подписывает PDF-документ, добавляя штамп с датой/временем, и сохраняет новую версию"""
-    document = get_object_or_404(Document, id=doc_id, owner=request.user)
-
-    if not document.filename.lower().endswith(".pdf"):
-        return JsonResponse({'success': False, 'error': 'Можно подписывать только PDF-документы.'}, status=400)
-
     try:
-        # Скачиваем текущую версию из MinIO во временный файл
-        minio_response = download_file_from_minio(document)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_input:
-            temp_input.write(minio_response.read())
-            temp_input_path = Path(temp_input.name)
+        data = json.loads(request.body)
+        cms_b64 = data.get('signature')
+        thumbprint = data.get('thumbprint')
 
-        # Создаём временный файл для результата
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_output:
-            temp_output_path = Path(temp_output.name)
+        if not cms_b64 or not thumbprint:
+            return JsonResponse({'error': 'Missing signature or thumbprint'}, status=400)
 
-        # Применяем подпись со штампом
-        stamp_pdf_with_dynamic_text(temp_input_path, temp_output_path)
+        # 1) Загружаем документ
+        document = get_object_or_404(Document, id=doc_id, owner=request.user)
+        pdf_bytes = download_file_from_minio(document).read()
 
-        # Загружаем подписанный документ в MinIO как новую версию
-        with open(temp_output_path, "rb") as f:
-            content = f.read()
+        # 2) Пересчитываем хеш, как на клиенте
+        server_hash = compute_pdf_hash(pdf_bytes)  # base64 от SHA-256 хеша
 
-        notes = f"Документ подписан пользователем {request.user.full_name}"
-        version = upload_file_to_minio(document, content, document.content_type, notes)
+        # 3) Декодируем CMS-подпись
+        cms_bytes = base64.b64decode(cms_b64)
 
-        # Создаём запись в истории передачи
+        # 4) Сохраняем подпись и файл как новую версию
+        version = upload_file_to_minio(
+            document=document,
+            file_bytes=pdf_bytes,  # тот же PDF
+            content_type='application/pdf',
+            notes=f"Externally signed via CAdES. Thumbprint: {thumbprint}",
+            file_content=pdf_bytes
+        )
+        version.certificate_thumbprint = thumbprint
+        version.signature_file_name = f"{thumbprint}_signature.p7s"
+        version.signature_data = cms_bytes  # если поле есть
+        version.is_signed = True
+        version.signed_at = timezone.now()
+        version.save()
+
+        # 5) Сохраняем действие в истории
         DocumentTransferHistory.objects.create(
             document=document,
             sender=request.user,
-            recipient_user=None,  # Отправитель и получатель — один пользователь
-            notes=notes,
+            recipient_user=request.user,
+            notes=f"Document signed externally (detached). Thumbprint: {thumbprint}",
             version=version,
             action_type="signature"
         )
 
-        # Удаляем временные файлы
-        temp_input_path.unlink(missing_ok=True)
-        temp_output_path.unlink(missing_ok=True)
-
         return JsonResponse({'success': True})
 
     except Exception as e:
+        print("Ошибка:", e)
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
+
+@require_GET
 @login_required
 def verify_document(request, doc_id):
-    document = get_object_or_404(Document, id=doc_id)
+    """
+    Проверяет подписи PDF-документа.
+    """
+    document = get_object_or_404(Document, id=doc_id, owner=request.user)
     try:
         response = download_file_from_minio(document)
         pdf_bytes = response.read()
         verified = verify_pdf_bytes(pdf_bytes, [])
 
-        # Добавляем поле success и возвращаем verified
         return JsonResponse({
             'success': True,
             'verified': verified
         })
+
     except Exception as e:
-        # Добавляем success: false и error
         return JsonResponse({
             'success': False,
             'verified': [],

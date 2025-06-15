@@ -34,14 +34,20 @@ urlpatterns = [
     path("upload/", views.upload_document, name="upload_document"),
     path("download/<int:doc_id>/", views.download_document, name="download_document"),
     path("auth/", include("webapp.urls")),
+
+    # Просмотр, удаление, отправка и версии документов
     path('documents/<int:doc_id>/view/', views.view_document, name='view_document'),
     path('documents/<int:doc_id>/delete/', views.delete_document, name='delete_document'),
     path('documents/<int:doc_id>/send/', views.send_document, name='send_document'),
+    path('documents/<int:doc_id>/new_version/', views.upload_new_version, name='upload_new_version'),
+
+    # Эндпоинты подписи/проверки через CAdES (КриптоПро)
+    path('documents/<int:doc_id>/hash/', views.get_document_hash, name='get_document_hash'),
     path('documents/<int:doc_id>/sign/', views.sign_document, name='sign_document'),
     path('documents/<int:doc_id>/verify/', views.verify_document, name='verify_document'),
+
+    # Редирект на dashboard
     path('', RedirectView.as_view(url='/dashboard/', permanent=False)),
-    path('documents/<int:doc_id>/new_version/', views.upload_new_version, name='upload_new_version'),
-    # path('documents/<int:doc_id>/versions/<str:version_id>/', views.download_version, name='download_version'),
 ]
 from django.conf import settings
 from django.conf.urls.static import static

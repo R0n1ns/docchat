@@ -2,6 +2,8 @@
 
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/docx-preview@2.3.0/dist/docx-preview.min.js"></script>
+<script language="javascript" src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js?v=290886"></script>
+<script language="javascript" src="https://www.cryptopro.ru/sites/default/files/products/cades/demopage/Code.js?v=290886"></script>
 
 <div class="container mt-4">
     <h2>{{ document.original_filename }}</h2>
@@ -93,8 +95,8 @@
    <div class="btn-group mt-3">
        {% if document.content_type == "application/pdf" %}
        <button id="signDocument" class="btn btn-success">
-           <i data-feather="edit"></i> Подписать документ
-       </button>
+          <i data-feather="edit"></i> Подписать документ
+        </button>
        <button id="verifySignature" class="btn btn-warning">
            <i data-feather="check-circle"></i> Проверить подпись
        </button>
@@ -104,6 +106,29 @@
     <!-- Всплывающее уведомление -->
     <div id="notification" class="alert alert-info" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 1000;">
     </div>
+<!-- Модальное окно выбора сертификата -->
+<div class="modal fade" id="certificateModal" tabindex="-1" aria-labelledby="certificateModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="certificateModalLabel">Выбор сертификата</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Выберите сертификат, которым хотите подписать документ:</p>
+        <select id="certList" class="form-select" size="8">
+          <!-- Опции будут добавлены динамически -->
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="selectCertBtn" class="btn btn-primary" disabled>
+          Подписать выбранным
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+      </div>
+    </div>
+  </div>
+</div>
 
     <!-- Секция предпросмотра документа -->
     <div class="text-center mt-4">
@@ -153,47 +178,123 @@ function showNotification(message, type="info") {
     }, 5000);
 }
 
-// Подписание документа
-document.getElementById('signDocument').addEventListener('click', function() {
-    fetch("{% url 'sign_document' document.id %}", {
+document.getElementById('verifySignature').addEventListener('click', async () => {
+  const resp = await fetch("{% url 'verify_document' document.id %}");
+  const data = await resp.json();
+  if (data.success && data.verified.length) {
+    showNotification("Подписал(и): " + data.verified.join(", "), "success");
+  } else {
+    showNotification("Нет валидных подписей", "warning");
+  }
+});
+
+</script>
+
+<script>
+let certificateList = [];       // здесь будем хранить объекты CAdESCOM.Certificate
+let selectedCertificate = null; // выбранный сертификат
+
+// Открываем хранилище и собираем список сертификатов
+document.getElementById('signDocument').addEventListener('click', () => {
+  if (!window.cadesplugin) {
+    alert("Плагин cadesplugin не загружен.");
+    return;
+  }
+  cadesplugin.async_spawn(function* () {
+    try {
+      const store = yield cadesplugin.CreateObjectAsync("CAdESCOM.Store");
+      yield store.Open(
+        cadesplugin.CAPICOM_CURRENT_USER_STORE,
+        cadesplugin.CAPICOM_MY_STORE,
+        cadesplugin.CAPICOM_STORE_OPEN_MAXIMUM_ALLOWED
+      );
+      const certs = yield store.Certificates;
+      const count = yield certs.Count;
+      if (count === 0) {
+        alert("Сертификаты не найдены.");
+        return;
+      }
+
+      // Очищаем список и наполняем select
+      const select = document.getElementById('certList');
+      select.innerHTML = "";
+      certificateList = [];
+      for (let i = 1; i <= count; i++) {
+        const cert = yield certs.Item(i);
+        const subj = yield cert.SubjectName;
+        const thumb = yield cert.Thumbprint;
+
+        const opt = document.createElement('option');
+        opt.value = i - 1; // индекс в массиве certificateList
+        opt.textContent = subj + " (Thumbprint: " + thumb + ")";
+        select.appendChild(opt);
+        certificateList.push(cert);
+      }
+
+      // при выборе — сохраняем объект сертификата
+      select.onchange = () => {
+        const idx = select.value;
+        selectedCertificate = certificateList[idx];
+        document.getElementById('selectCertBtn').disabled = false;
+      };
+
+      // показываем модалку
+      new bootstrap.Modal(document.getElementById('certificateModal')).show();
+    } catch (e) {
+      alert("Ошибка при загрузке сертификатов: " + e.message);
+    }
+  });
+});
+
+// Нажатие «Подписать выбранным»
+document.getElementById('selectCertBtn').addEventListener('click', () => {
+  cadesplugin.async_spawn(function* () {
+    try {
+      // Получаем хеш документа с сервера
+      const resp = yield fetch("{% url 'get_document_hash' document.id %}");
+      const { hash } = yield resp.json();
+
+      // Создаём CPSigner и настраиваем его
+      const signer = yield cadesplugin.CreateObjectAsync("CAdESCOM.CPSigner");
+      yield signer.propset_Certificate(selectedCertificate);
+      yield signer.propset_TSAAddress("http://testgost2012.cryptopro.ru/tsp2012g/tsp.srf");
+
+      // Создаём CadesSignedData и передаём хеш
+      const signedData = yield cadesplugin.CreateObjectAsync("CAdESCOM.CadesSignedData");
+      yield signedData.propset_ContentEncoding(cadesplugin.CADESCOM_BASE64_TO_BINARY);
+      yield signedData.propset_Content(hash);
+
+      // Подписываем в формате CAdES‑X Long Type 1
+      const signature = yield signedData.SignCades(
+          signer,
+          cadesplugin.CADESCOM_CADES_BES,
+          false  // встроенная (attached) подпись
+        );
+
+      // Отправляем подпись обратно на сервер
+      yield fetch("{% url 'sign_document' document.id %}", {
         method: "POST",
         headers: {
-            "X-CSRFToken": "{{ csrf_token }}"
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showNotification("Документ успешно подписан.", "success");
-            location.reload();
-        } else {
-            showNotification("Ошибка: " + data.error, "danger");
-        }
-    })
-    .catch(error => {
-        showNotification("Ошибка сети.", "danger");
-    });
-});  // Закрытие первого обработчика
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}"
+        },
+        body: JSON.stringify({
+          signature: signature,
+          thumbprint: yield selectedCertificate.Thumbprint
+        })
+      });
 
-// Проверка подписей
-document.getElementById('verifySignature').addEventListener('click', function() {
-    fetch("{% url 'verify_document' document.id %}")
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {  // Проверяем общий успех операции
-            if (data.verified.length > 0) {
-                showNotification("Документ подписан пользователями: " + data.verified.join(", "), "success");
-            } else {
-                showNotification("Подписей не найдено или они недействительны.", "warning");
-            }
-        } else {
-            showNotification("Ошибка проверки: " + data.error, "danger");
-        }
-    })
-    .catch(error => {
-        showNotification("Ошибка сети.", "danger");
-    });
-});  // Закрытие второго обработчика
+      // Закрываем модалку и обновляем страницу
+      bootstrap.Modal.getInstance(document.getElementById('certificateModal')).hide();
+      showNotification("Документ успешно подписан", "success");
+      location.reload();
+
+    } catch (err) {
+      showNotification("Ошибка при подписании: " + err.message, "danger");
+    }
+  });
+});
 </script>
+
 
 {% endblock %}

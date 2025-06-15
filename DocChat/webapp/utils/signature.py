@@ -176,5 +176,32 @@ def verify_pdf_bytes(input_bytes: bytes, trust_roots_pem: list[str]) -> list[str
     # Например, возвращаем фиктивное имя владельца сертификата
     return ["Иванов И.И."]
 
+import hashlib, base64
 
+def compute_pdf_hash(pdf_bytes: bytes) -> str:
+    h = hashlib.sha256(pdf_bytes).digest()
+    return base64.b64encode(h).decode()
 
+import subprocess
+from django.conf import settings
+
+def verify_signature_with_csp(
+    bucket: str, file_name: str,
+    signature_file: str,
+) -> bool:
+    """
+    Выкачивает object и p7s, запускает csptest -verify.
+    """
+    # пути к файлам во временной папке
+    data_path = download_temp(bucket, file_name)
+    sig_path  = download_temp(bucket, signature_file)
+
+    cmd = [
+      settings.CSPTEST_PATH,  # например, "csptest" в PATH
+      "-verify", "-detached",
+      "-hash", data_path,
+      "-signer", sig_path
+    ]
+    proc = subprocess.run(cmd, capture_output=True)
+    out = proc.stdout.decode('cp1251', errors='ignore').lower()
+    return "signature is valid" in out
